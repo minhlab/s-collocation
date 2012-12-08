@@ -4,6 +4,9 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Map.Entry;
 
+import com.google.common.base.Objects;
+import com.google.common.io.CharStreams;
+
 import edu.ucla.sspace.common.SemanticSpace;
 import edu.ucla.sspace.common.Similarity.SimType;
 import edu.ucla.sspace.common.WordComparator;
@@ -11,68 +14,119 @@ import edu.ucla.sspace.dependency.DependencyExtractorManager;
 import edu.ucla.sspace.dependency.DependencyRelation;
 import edu.ucla.sspace.dependency.DependencyTreeNode;
 import edu.ucla.sspace.dependency.WaCKyDependencyExtractor;
-import edu.ucla.sspace.dv.DependencyVectorSpace;
+import edu.ucla.sspace.dri.DependencyRandomIndexing;
 import edu.ucla.sspace.text.Document;
 import edu.ucla.sspace.text.IteratorFactory;
 import edu.ucla.sspace.text.UkWacDependencyFileIterator;
-import edu.ucla.sspace.util.SortedMultiMap;
+import edu.ucla.sspace.util.MultiMap;
 
 public class CollocationDetector {
 
 	private SemanticSpace semanticSpace;
 	private BigramCounts bigramCounts;
-	private int neighborHoodSize = 100;
+	private WordComparator wordComparator = new WordComparator();
+	
+	private int neighborhoodSize = 100;
+	private int processedDocumentCount = 0;
 
+	/**
+	 * Saved for testing purpose only
+	 */
+	private MultiMap<Double, String> neighbors;
+	
 	public CollocationDetector(SemanticSpace semanticSpace, BigramCounts bigramCounts) {
 		this.semanticSpace = semanticSpace;
 		this.bigramCounts = bigramCounts;
 	}
 
 	/**
+	 * <p>Compute a score representing the grade that one word predicts its following
+	 * counterpart.</p>
 	 * 
+	 * TODO fix terminology
 	 * @param first
 	 * @param second
 	 * @return
 	 */
-	public double getCollocation(String first, String second) {
-		WordComparator wordComparator = new WordComparator(1);
-		double observedFreq = getForwardPredictingFrequency(first, second);
+	public double getForwardCollocationScore(String first, String second) {
+		double observedFreq = getForwardFrequency(first, second);
 		double expectedFreq = 0;
-		neighbors = wordComparator.getMostSimilar(
-				second, semanticSpace, neighborHoodSize, SimType.COSINE);
-		if (neighbors == null) {
-			return Double.NaN;
-		}
+		neighbors = getNeighbors(second);
 		for (Entry<Double, String> entry : neighbors.entrySet()) {
-			expectedFreq += getForwardPredictingFrequency(first, entry.getValue());
+			expectedFreq += getForwardFrequency(first, entry.getValue());
 		}
 		expectedFreq /= neighbors.entrySet().size();
 		return observedFreq - expectedFreq;
 	}
-	
-	private double getForwardPredictingFrequency(String first, String second) {
+
+	/**
+	 * <p>Compute a score representing the grade that one word predicts its following
+	 * counterpart.</p>
+	 * 
+	 * TODO fix terminology
+	 * @param first
+	 * @param second
+	 * @return
+	 */
+	public double getBackwardCollocationScore(String first, String second) {
+		double observedFreq = getBackwardFrequency(first, second);
+		double expectedFreq = 0;
+		neighbors = getNeighbors(first);
+		for (Entry<Double, String> entry : neighbors.entrySet()) {
+			expectedFreq += getBackwardFrequency(first, entry.getValue());
+		}
+		expectedFreq /= neighbors.entrySet().size();
+		return observedFreq - expectedFreq;
+	}
+
+	private double getForwardFrequency(String first, String second) {
 		return bigramCounts.getBigramCount(first, second) /
 				(double)bigramCounts.getFirstCount(first);
 	}
 
+	private double getBackwardFrequency(String first, String second) {
+		return bigramCounts.getBigramCount(first, second) /
+				(double)bigramCounts.getSecondCount(first);
+	}
+
+	private MultiMap<Double, String> getNeighbors(String second) {
+		return Objects.firstNonNull(wordComparator.getMostSimilar(
+				second, semanticSpace, neighborhoodSize, SimType.COSINE),
+				CollectionUtils.emptyMultiMap());
+	}
+	
 	private static WaCKyDependencyExtractor extractor = new WaCKyDependencyExtractor();
-	private SortedMultiMap<Double, String> neighbors;
 	
 	static {
 		DependencyExtractorManager.addExtractor("wacky", extractor);
 	}
 	
-	public static CollocationDetector fromUkwac(File file) throws IOException {
+	/**
+	 * Initiate and fill a collocation detector with data from an UkWaC corpus.
+	 * 
+	 * @param file
+	 * @return
+	 * @throws IOException
+	 */
+	public static CollocationDetector fromUkwacCorpus(File file) throws IOException {
 		CollocationDetector collocationDetector = new CollocationDetector(
-				new DependencyVectorSpace(), new BigramCounts());
-		collocationDetector.loadUkwacFile(file);
+				new DependencyRandomIndexing(null), new BigramCounts());
+		collocationDetector.loadUkwacCorpus(file);
 		return collocationDetector;
 	}
 
-	public void loadUkwacFile(File file) throws IOException {
+	/**
+	 * Add data from the provided corpus to this detector. This method can be
+	 * called several times to accumulate data. If the specified file happens to
+	 * be a directory, its content will be loaded in a recursive manner.
+	 * 
+	 * @param file
+	 * @throws IOException
+	 */
+	public void loadUkwacCorpus(File file) throws IOException {
 		if (file.isDirectory()) {
 			for (File child : file.listFiles()) {
-				loadUkwacFile(child);
+				loadUkwacCorpus(child);
 			}
 			return;
 		}
@@ -80,8 +134,21 @@ public class CollocationDetector {
 				new UkWacDependencyFileIterator(file.getAbsolutePath()); 
 				iterator.hasNext();) {
 			Document document = iterator.next();
-			semanticSpace.processDocument(document.reader());
-			addBigramCounts(bigramCounts, document);
+			try {
+				processDocument(document);
+			} catch (ArrayIndexOutOfBoundsException ex) {
+				System.err.print("Error in document: ");
+				System.err.println(CharStreams.toString(document.reader()));
+			}
+		}
+	}
+
+	private void processDocument(Document document) throws IOException {
+		semanticSpace.processDocument(document.reader());
+		addBigramCounts(bigramCounts, document);
+		processedDocumentCount++;
+		if (processedDocumentCount % 10 == 0) {
+			System.out.println(processedDocumentCount);
 		}
 	}
 
@@ -111,16 +178,28 @@ public class CollocationDetector {
 		return semanticSpace;
 	}
 	
-	SortedMultiMap<Double, String> getNeighbors() {
+	MultiMap<Double, String> getNeighbors() {
 		return neighbors;
 	}
-	
-	public int getNeighborHoodSize() {
-		return neighborHoodSize;
+
+	/**
+	 * Return neighborhood size -- the size of the examined neighborhood of a
+	 * word to estimate its probability of accordance with the other word in
+	 * pair.
+	 * 
+	 * @return
+	 */
+	public int getNeighborhoodSize() {
+		return neighborhoodSize;
 	}
 	
-	public void setNeighborHoodSize(int neighborHoodSize) {
-		this.neighborHoodSize = neighborHoodSize;
+	/**
+	 * Set neighborhood size.
+	 * 
+	 * @param neighborHoodSize
+	 */
+	public void setNeighborhoodSize(int neighborHoodSize) {
+		this.neighborhoodSize = neighborHoodSize;
 	}
 	
 }

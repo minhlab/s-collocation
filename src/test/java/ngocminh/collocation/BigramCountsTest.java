@@ -31,7 +31,7 @@ public class BigramCountsTest {
 	@Test
 	public void large() throws IOException {
 		CollocationDetector collocationDetector = CollocationDetector
-				.fromUkwac(new File("src/test/resources/ukwac.1000.xml"));
+				.fromUkwacCorpus(new File("src/test/resources/ukwac.1000.xml"));
 		collocationDetector.getBigramCounts().write(System.out);
 	}
 

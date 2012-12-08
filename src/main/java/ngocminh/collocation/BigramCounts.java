@@ -11,15 +11,17 @@ import com.google.common.collect.Multiset;
 
 public class BigramCounts {
 	
-	private Map<String, FirstWord> map = new HashMap<>();
+	private Map<String, FirstWordData> map = new HashMap<>();
+	private Multiset<String> seconds = HashMultiset.create();
 	
 	public void add(String first, String second) {
 		if (!map.containsKey(first)) {
-			map.put(first, new FirstWord());
+			map.put(first, new FirstWordData());
 		}
-		FirstWord firstWord = map.get(first);
+		FirstWordData firstWord = map.get(first);
 		firstWord.count++;
 		firstWord.secondWords.add(second);
+		seconds.add(second);
 	}
 
 	public int getBigramCount(String first, String second) {
@@ -36,20 +38,26 @@ public class BigramCounts {
 		return 0;
 	}
 	
+	public int getSecondCount(String second) {
+		return seconds.count(second);
+	}
+	
 	public void write(OutputStream outputStream) {
 		PrintStream out = new PrintStream(outputStream);
-		for (Entry<String, FirstWord> entry : map.entrySet()) {
+		for (Entry<String, FirstWordData> entry : map.entrySet()) {
 			String first = entry.getKey();
-			out.format("#(%s) = %d\n", first, entry.getValue().count);
+			FirstWordData data = entry.getValue();
+			
+			out.format("#(%s) = %d\n", first, data.count);
 			for (com.google.common.collect.Multiset.Entry<String> secondEntry : 
-					entry.getValue().secondWords.entrySet()) {
+					data.secondWords.entrySet()) {
 				out.format("#(%s, %s) = %d\n", first, 
 						secondEntry.getElement(), secondEntry.getCount());
 			}
 		}
 	}
 	
-	private static class FirstWord {
+	private static class FirstWordData {
 		
 		int count;
 		Multiset<String> secondWords = HashMultiset.create();
