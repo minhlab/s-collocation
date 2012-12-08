@@ -2,7 +2,10 @@ package ngocminh.collocation;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.Map.Entry;
+
+import ngocminh.collocation.util.NormalWordFilter;
 
 import com.google.common.base.Objects;
 import com.google.common.io.CharStreams;
@@ -95,9 +98,10 @@ public class CollocationDetector {
 				CollectionUtils.emptyMultiMap());
 	}
 	
-	private static WaCKyDependencyExtractor extractor = new WaCKyDependencyExtractor();
+	private static final WaCKyDependencyExtractor extractor; 
 	
 	static {
+		extractor = new WaCKyDependencyExtractor(new NormalWordFilter(), null);
 		DependencyExtractorManager.addExtractor("wacky", extractor);
 	}
 	
@@ -130,7 +134,7 @@ public class CollocationDetector {
 			}
 			return;
 		}
-		for (UkWacDependencyFileIterator iterator = 
+		for (Iterator<Document> iterator = 
 				new UkWacDependencyFileIterator(file.getAbsolutePath()); 
 				iterator.hasNext();) {
 			Document document = iterator.next();
@@ -155,6 +159,9 @@ public class CollocationDetector {
 	private static void addBigramCounts(BigramCounts bigramCounts,
 			Document document) throws IOException {
 		DependencyTreeNode[] tree = extractor.readNextTree(document.reader());
+		if (tree == null) {
+			return;
+		}
 		for (int i = 0; i < tree.length; i++) {
 			DependencyTreeNode node = tree[i];
 			if (node.word() == IteratorFactory.EMPTY_TOKEN) {
@@ -165,7 +172,7 @@ public class CollocationDetector {
 				if (depend == node || depend.word() == IteratorFactory.EMPTY_TOKEN) {
 					continue;
 				}
-				bigramCounts.add(node.lemma(), depend.lemma());
+				bigramCounts.add(node.word(), depend.word());
 			}
 		}
 	}
